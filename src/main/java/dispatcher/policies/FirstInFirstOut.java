@@ -12,7 +12,9 @@ public class FirstInFirstOut implements Policy {
 
     @Override
     public Trip pickNext(List<Trip> readyLine) {
-        // TODO
+        if(!readyLine.isEmpty()) {
+            return readyLine.get(0);
+        }
         return null;
     }
 }
