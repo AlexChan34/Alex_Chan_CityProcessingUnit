@@ -1,9 +1,14 @@
 package trip;
 
 import driver.Driver;
+import driver.Message;
 import trip.stoppoints.StopPoint;
+import logbook.EventType;
 
 import java.util.Map;
+import java.util.ArrayList;
+import java.util.List;
+
 
 /**
  * A tunnel: a road that every driver in the city shares. Similar to a critical section guarding a shared resource.
@@ -19,10 +24,22 @@ import java.util.Map;
  */
 public class Tunnel extends Road {
 
+    private static class Entry {
+        final Driver driver;
+        final Vehicle vehicle;
+
+        Entry(Driver driver, Vehicle vehicle) {
+            this.driver = driver;
+            this.vehicle = vehicle;
+        }
+    }
+
     private final Map<Vehicle.Type, Integer> capacities;
 
     // TODO: add the fields you need, such as the vehicles in the tunnel and the vehicles (with their drivers) waiting
     //  to enter
+    private final List<Entry> inTunnel = new ArrayList<>();
+    private final List<Entry> waiting = new ArrayList<>();
 
     /**
      * Creates a tunnel.
@@ -57,7 +74,29 @@ public class Tunnel extends Road {
     @Override
     public boolean enter(Driver driver, Vehicle vehicle) {
         // TODO
-        return false;
+        synchronized(this){
+            if(canEnter(vehicle)){
+                inTunnel.add(new Entry(driver, vehicle));
+                driver.getLogbook().record(vehicle, this, EventType.TUNNEL_ENTER);
+                return true;
+            }
+            driver.getLogbook().record(vehicle, this, EventType.TUNNEL_ENTER_FAILED);
+            waiting.add(new Entry(driver, vehicle));
+            driver.sendMessage(new Message(vehicle.id(), Message.Type.RED_LIGHT));
+            return false;
+        }
+    }
+
+    private boolean canEnter(Vehicle vehicle) {
+        if (inTunnel.isEmpty()) {
+            return true;
+        }
+        for (Entry e : inTunnel) {
+            if (e.vehicle.type() != vehicle.type()) {
+                return false;
+            }
+        }
+        return inTunnel.size() < capacities.get(vehicle.type());
     }
 
     /**
@@ -73,7 +112,21 @@ public class Tunnel extends Road {
      */
     @Override
     public void exit(Driver driver, Vehicle vehicle) {
-        // TODO
+        synchronized (this){
+            boolean removed = inTunnel.removeIf(e -> e.vehicle == vehicle);
+            if(!removed){
+                return;
+            }
+            driver.getLogbook().record(vehicle, this, EventType.TUNNEL_EXIT);
+            if (getStopPoint() != null) {
+                getStopPoint().goThrough(driver, vehicle);
+            }
+            List<Entry> toNotify = new ArrayList<>(waiting);
+            waiting.clear();
+            for (Entry e : toNotify) {
+                e.driver.getClock().setAlarm(1, () -> e.driver.sendMessage(new Message(e.vehicle.id(), Message.Type.GREEN_LIGHT)));
+            }
+        }
     }
 
     public Map<Vehicle.Type, Integer> getCapacities() {

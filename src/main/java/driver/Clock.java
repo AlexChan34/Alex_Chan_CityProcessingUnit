@@ -4,6 +4,8 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.locks.ReentrantLock;
+import java.util.concurrent.locks.Condition;
 
 /**
  * The city clock, which counts ticks. Just like a CPU/hardware clock.
@@ -28,13 +30,37 @@ public class Clock {
     private int tickNum;
 
     // TODO: add the fields you need, such as a lock, its conditions, the number of waiters, and the clock thread
+    private final ReentrantLock lock = new ReentrantLock();
+    private final Condition allWaiting = lock.newCondition(); 
+    private final Condition tickStarted = lock.newCondition();
+    int numWaiters;
+    int numWaiting;
+    private long generation;
+    private Thread clockThread;
+
 
     /**
      * Starts a separate thread that calls {@code startNextTick()} in a loop until {@code stopClock()} is called.
      * Does nothing if a clock thread is already running due to a previous call.
      */
     public void startClock() {
-        // TODO
+        lock.lock();
+        try{
+            if(clockThread != null && clockThread.isAlive()){
+                return;
+            }
+            clockThread = new Thread(() ->{
+                try{
+                    while(!Thread.currentThread().isInterrupted()){
+                        startNextTick();
+                    }
+                }catch (InterruptedException e){
+                }
+            }, "clock");
+            clockThread.start();
+        }finally {
+            lock.unlock();
+        }
     }
 
     /**
@@ -42,7 +68,22 @@ public class Clock {
      * Does nothing if no clock thread is running.
      */
     public void stopClock() {
-        // TODO
+        Thread t;
+        lock.lock();
+        try {
+            t = clockThread;
+            clockThread = null;
+        } finally {
+        lock.unlock();
+        }
+        if (t != null) {
+            t.interrupt();
+            try {
+                t.join();   // outside the lock, or the clock thread could never exit
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
     }
 
     /**
@@ -53,7 +94,19 @@ public class Clock {
      * @throws InterruptedException if the current thread is interrupted while waiting
      */
     public void startNextTick() throws InterruptedException {
-        // TODO
+        lock.lock();
+        try{
+            while(numWaiters == 0 || numWaiting < numWaiters){
+                allWaiting.await();
+            }
+            tickNum++;
+            runAlarms();
+            numWaiting = 0;
+            generation++;
+            tickStarted.signalAll();
+        } finally {
+            lock.unlock();
+        }
     }
 
     /**
@@ -63,7 +116,24 @@ public class Clock {
      * @throws InterruptedException if the current thread is interrupted while waiting
      */
     public void waitForTick() throws InterruptedException {
-        // TODO
+        lock.lock();
+        try{
+            long myGeneration = generation;
+            numWaiting++;
+            allWaiting.signalAll();
+            try{
+                while(myGeneration == generation){
+                    tickStarted.await();
+                }
+            } catch(InterruptedException e){
+                if(generation == myGeneration){
+                    numWaiting--;
+                }
+                throw e;
+            }
+        } finally{
+            lock.unlock();
+        }
     }
 
     /**
@@ -96,6 +166,12 @@ public class Clock {
      */
     public void signalNewWaiter() {
         // TODO
+        lock.lock();
+        try{
+            numWaiters++;
+        } finally {
+            lock.unlock();
+        }
     }
 
     /**
@@ -104,6 +180,15 @@ public class Clock {
      */
     public void signalRemoveWaiter() {
         // TODO
+        lock.lock();
+        try{
+            if(numWaiters >0){
+                numWaiters--;
+                allWaiting.signalAll();
+            }
+        } finally {
+            lock.unlock();
+        }
     }
 
     /**
@@ -127,10 +212,15 @@ public class Clock {
      * @param action the action to run
      */
     public void setAlarmAt(int tick, Runnable action) {
-        if (tick <= tickNum) {
-            throw new IllegalArgumentException("tick " + tick + " is not after the current tick " + tickNum);
+        lock.lock();
+        try {
+            if (tick <= tickNum) {
+                throw new IllegalArgumentException("tick " + tick + " is not after the current tick " + tickNum);
+            }
+            alarms.computeIfAbsent(tick, t -> new ArrayList<>()).add(action);
+        } finally {
+            lock.unlock();
         }
-        alarms.computeIfAbsent(tick, t -> new ArrayList<>()).add(action);
     }
 
     /**
@@ -144,7 +234,12 @@ public class Clock {
         if (numTicks < 1) {
             throw new IllegalArgumentException("numTicks must be at least 1");
         }
-        setAlarmAt(tickNum + numTicks, action);
+        lock.lock();
+        try{
+            setAlarmAt(tickNum + numTicks, action);
+        } finally {
+            lock.unlock();
+        }
     }
 
     /**
@@ -154,7 +249,12 @@ public class Clock {
      * @return true if an alarm is set for a later tick, otherwise false
      */
     public boolean hasAlarms() {
-        return !alarms.isEmpty();
+        lock.lock();
+        try{
+            return !alarms.isEmpty();
+        } finally {
+            lock.unlock();
+        }
     }
 
     /**
@@ -164,6 +264,11 @@ public class Clock {
      * @return the number of ticks that have been started; 0 before the first tick
      */
     public int getTickNum() {
-        return tickNum;
+        lock.lock();
+        try{
+            return tickNum;
+        } finally {
+            lock.unlock();
+        }
     }
 }

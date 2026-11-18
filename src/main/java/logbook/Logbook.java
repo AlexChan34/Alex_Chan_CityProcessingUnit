@@ -34,15 +34,22 @@ public class Logbook {
      * @param type    the event's type
      */
     public void record(Vehicle vehicle, Road road, EventType type) {
-        queue.add(new Event(vehicle, road, type, ++eventCounter));
+        synchronized (this){
+            queue.add(new Event(vehicle, road, type, ++eventCounter));
+            notifyAll();
+        }
     }
 
     public void record(Vehicle vehicle, EventType type) {
-        record(vehicle, null, type);
+        synchronized (this){
+            record(vehicle, null, type);
+        }
     }
 
     public void record(EventType type) {
-        record(null, null, type);
+        synchronized (this){
+            record(null, null, type);
+        }
     }
 
     /**
@@ -52,7 +59,9 @@ public class Logbook {
      * @return the head of the logbook, or null if the logbook is empty
      */
     public Event poll() {
-        return queue.poll();
+        synchronized (this){
+            return queue.poll();
+        }
     }
 
     /**
@@ -63,7 +72,12 @@ public class Logbook {
      */
     public Event take() throws InterruptedException {
         // TODO
-        return null;
+        synchronized (this){
+            while (queue.isEmpty()){
+                wait();
+            }
+            return queue.poll();
+        }
     }
 
     /**
@@ -71,8 +85,10 @@ public class Logbook {
      * TODO: make this method thread-safe.
      */
     public void clear() {
-        queue.clear();
-        eventCounter = 0;
+        synchronized (this){
+            queue.clear();
+            eventCounter = 0;
+        }
     }
 
     /**
@@ -82,7 +98,9 @@ public class Logbook {
      * @return the ID of the most recent event, or 0 if no events have been added
      */
     public int getCurrentEventId() {
-        return eventCounter;
+        synchronized (this){
+            return eventCounter;
+        }
     }
 
     /**
@@ -92,6 +110,8 @@ public class Logbook {
      * @return the number of events in the logbook
      */
     public int size() {
-        return queue.size();
+        synchronized (this){
+            return queue.size();
+        }
     }
 }
